@@ -88,7 +88,15 @@ namespace OmniSharp.Roslyn.CSharp.Services.Refactoring.V2
             // This isn't a great solution and might need changing later, but every Roslyn code action
             // derived from this type tries to display a dialog. For now, this is a reasonable solution.
             var availableActions = ConvertToAvailableCodeAction(distinctActions)
-                .Where(a => !a.CodeAction.GetType().GetTypeInfo().IsSubclassOf(typeof(CodeActionWithOptions)));
+                .Where(a => !(a.CodeAction.GetType().GetTypeInfo().IsSubclassOf(typeof(CodeActionWithOptions)) && a.GetType().ToString().Contains("WithDialog")));
+
+           var withOptions = ConvertToAvailableCodeAction(distinctActions)
+               .Where(a => a.CodeAction.GetType().GetTypeInfo().IsSubclassOf(typeof(CodeActionWithOptions)))
+               .Select(a => a.CodeAction)
+               .Cast<CodeActionWithOptions>()
+               .Where(x => x.GetType().ToString().Contains("ExtractInterface"))
+               .Select(x => x.GetOptions(CancellationToken.None))
+               .ToList();
 
             return availableActions;
         }
