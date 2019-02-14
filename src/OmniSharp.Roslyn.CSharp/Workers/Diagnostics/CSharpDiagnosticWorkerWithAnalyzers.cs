@@ -9,8 +9,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.Host;
 using Microsoft.CodeAnalysis.Options;
 using Microsoft.Extensions.Logging;
+using OmniSharp.Abstractions.Mef;
 using OmniSharp.Helpers;
 using OmniSharp.Models.Diagnostics;
 using OmniSharp.Options;
@@ -49,6 +51,7 @@ namespace OmniSharp.Roslyn.CSharp.Services.Diagnostics
             _forwarder = forwarder;
             _workspace = workspace;
             _rulesetsForProjects = rulesetsForProjects;
+
 
             _workspaceAnalyzerOptionsConstructor = Assembly
                 .Load("Microsoft.CodeAnalysis.Features")
@@ -112,6 +115,8 @@ namespace OmniSharp.Roslyn.CSharp.Services.Diagnostics
 
         private void QueueForAnalysis(ImmutableArray<ProjectId> projects)
         {
+            var foo = _workspace.Services.GetService<IWorkspaceService>();
+
             foreach (var projectId in projects)
             {
                 _workQueue.PutWork(projectId);
