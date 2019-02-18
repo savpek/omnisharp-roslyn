@@ -20,6 +20,7 @@ namespace OmniSharp.Helpers
                 EndColumn = span.EndLinePosition.Character,
                 Text = $"{diagnostic.GetMessage()} ({diagnostic.Id})",
                 LogLevel = diagnostic.Severity.ToString(),
+                Tags = diagnostic.Descriptor.CustomTags.ToArray(),
                 Id = diagnostic.Id
             };
         }
