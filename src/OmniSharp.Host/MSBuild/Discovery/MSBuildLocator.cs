@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Immutable;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.Logging;
@@ -213,21 +214,14 @@ namespace OmniSharp.MSBuild.Discovery
 
         public ImmutableArray<MSBuildInstance> GetInstances()
         {
-            var builder = ImmutableArray.CreateBuilder<MSBuildInstance>();
+            var result = _providers
+                    .SelectMany(x => x.GetInstances())
+                    .Where(x => x != null)
+                    .OrderByDescending(x => x.Version)
+                    .ToImmutableArray();
 
-            foreach (var provider in _providers)
-            {
-                foreach (var instance in provider.GetInstances())
-                {
-                    if (instance != null)
-                    {
-                        builder.Add(instance);
-                    }
-                }
-            }
-
-            var result = builder.ToImmutable();
             LogInstances(result);
+
             return result;
         }
 
