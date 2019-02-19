@@ -52,6 +52,8 @@ namespace OmniSharp
                 }
             }
 
+            builder.Add(typeof(FooBarJeeJee).Assembly);
+
             _assemblies = builder.ToImmutableArray();
         }
 

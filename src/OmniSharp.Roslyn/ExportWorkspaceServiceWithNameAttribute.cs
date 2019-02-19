@@ -5,7 +5,7 @@ using System.Reflection;
 using Microsoft.CodeAnalysis.Host;
 using Microsoft.CodeAnalysis.Host.Mef;
 
-namespace OmniSharp.Abstractions.Mef
+namespace OmniSharp
 {
     [MetadataAttribute]
     [AttributeUsage(AttributeTargets.Class)]
@@ -45,15 +45,30 @@ namespace OmniSharp.Abstractions.Mef
         }
     }
 
+    public interface ITestWorkspaceService: IWorkspaceService
+    {
+    }
 
+    [ExportWorkspaceService(typeof(ITestWorkspaceService), ServiceLayer.Host), Shared]
+    public class TestWorkspaceService: ITestWorkspaceService
+    {
+    }
 
-    [ExportWorkspaceServiceWithAssemblyQualifiedName2("Microsoft.CodeAnalysis.Features", "Microsoft.CodeAnalysis.PickMembers.IPickMembersService")]
+    [Shared]
+    [ExportWorkspaceServiceWithAssemblyQualifiedName("Microsoft.CodeAnalysis.Features", "Microsoft.CodeAnalysis.PickMembers.IPickMembersService")]
     public class FooBarJeeJee : DynamicObject, IWorkspaceService
     {
         public FooBarJeeJee()
         {
-            Console.WriteLine("MITÄSVITTUATAAS ####################################");
+            Console.WriteLine("MITÄSVITTUATAAS");
         }
+
+        public override bool TryConvert(ConvertBinder binder, out object result)
+        {
+            result = null;
+            return !binder.Type.IsValueType;
+        }
+
         public override bool TryInvokeMember(InvokeMemberBinder binder, object[] args, out object result)
         {
             Console.WriteLine("ASDFASDFASDF");

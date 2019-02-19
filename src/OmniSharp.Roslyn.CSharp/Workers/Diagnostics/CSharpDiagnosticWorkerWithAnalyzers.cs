@@ -12,7 +12,6 @@ using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Host;
 using Microsoft.CodeAnalysis.Options;
 using Microsoft.Extensions.Logging;
-using OmniSharp.Abstractions.Mef;
 using OmniSharp.Helpers;
 using OmniSharp.Models.Diagnostics;
 using OmniSharp.Options;
@@ -129,7 +128,7 @@ namespace OmniSharp.Roslyn.CSharp.Services.Diagnostics
 
         private void QueueForAnalysis(ImmutableArray<Document> documents)
         {
-            var foo = _workspace.Services.GetService<IWorkspaceService>();
+            var foo = _workspace.Services.GetService<ITestWorkspaceService>();
 
             foreach (var document in documents)
             {
