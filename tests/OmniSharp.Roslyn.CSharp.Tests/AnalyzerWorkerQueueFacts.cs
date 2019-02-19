@@ -4,7 +4,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using OmniSharp.Roslyn.CSharp.Workers.Diagnostics;
 using Xunit;
 
@@ -48,62 +47,63 @@ namespace OmniSharp.Roslyn.CSharp.Tests
         }
 
         [Fact]
-        public void WhenProjectsAreAddedButThrotlingIsntOverNoProjectsShouldBeReturned()
+        public void WhenItemsAreAddedButThrotlingIsntOverNoWorkShouldBeReturned()
         {
             var now = DateTime.UtcNow;
             var queue = new AnalyzerWorkQueue(new LoggerFactory(), utcNow: () => now);
-            var projectId = ProjectId.CreateNewId();
+            var document = CreateTestDocument();
 
-            queue.PutWork(projectId);
+            queue.PutWork(document);
             Assert.Empty(queue.TakeWork());
         }
 
         [Fact]
-        public void WhenProjectsAreAddedToQueueThenTheyWillBeReturned()
+        public void WhenWorksIsAddedToQueueThenTheyWillBeReturned()
         {
             var now = DateTime.UtcNow;
             var queue = new AnalyzerWorkQueue(new LoggerFactory(), utcNow: () => now);
-            var projectId = ProjectId.CreateNewId();
+            var document = CreateTestDocument();
 
-            queue.PutWork(projectId);
+            queue.PutWork(document);
 
             now = PassOverThrotlingPeriod(now);
+            var work = queue.TakeWork();
 
-            Assert.Contains(projectId, queue.TakeWork());
+            Assert.Contains(document, work);
             Assert.Empty(queue.TakeWork());
         }
 
         [Fact]
-        public void WhenSameProjectIsAddedMultipleTimesInRowThenThrottleProjectsAsOne()
+        public void WhenSameItemIsAddedMultipleTimesInRowThenThrottleItemAsOne()
         {
             var now = DateTime.UtcNow;
             var queue = new AnalyzerWorkQueue(new LoggerFactory(), utcNow: () => now);
-            var projectId = ProjectId.CreateNewId();
+            var document = CreateTestDocument();
 
-            queue.PutWork(projectId);
-            queue.PutWork(projectId);
-            queue.PutWork(projectId);
+            queue.PutWork(document);
+            queue.PutWork(document);
+            queue.PutWork(document);
 
             Assert.Empty(queue.TakeWork());
 
             now = PassOverThrotlingPeriod(now);
 
-            Assert.Contains(projectId, queue.TakeWork());
+            Assert.Contains(document, queue.TakeWork());
             Assert.Empty(queue.TakeWork());
         }
 
-        private static DateTime PassOverThrotlingPeriod(DateTime now) => now.AddSeconds(1);
+        private static DateTime PassOverThrotlingPeriod(DateTime now) => now.AddSeconds(30);
 
         [Fact]
         public void WhenWorkIsAddedThenWaitNextIterationOfItReady()
         {
             var now = DateTime.UtcNow;
             var queue = new AnalyzerWorkQueue(new LoggerFactory(), utcNow: () => now, timeoutForPendingWorkMs: 500);
-            var projectId = ProjectId.CreateNewId();
+            var document = CreateTestDocument();
 
-            queue.PutWork(projectId);
+            queue.PutWork(document);
 
-            var pendingTask = queue.WaitForPendingWorkDoneEvent(new [] { projectId }.ToImmutableArray());
+            var pendingTask = queue.WaitWorkReadyForDocuments(new [] { document }.ToImmutableArray());
             pendingTask.Wait(TimeSpan.FromMilliseconds(50));
 
             Assert.False(pendingTask.IsCompleted);
@@ -111,7 +111,7 @@ namespace OmniSharp.Roslyn.CSharp.Tests
             now = PassOverThrotlingPeriod(now);
 
             var work = queue.TakeWork();
-            queue.MarkWorkAsCompleteForProject(projectId);
+            queue.MarkWorkAsCompleteForDocument(document);
             pendingTask.Wait(TimeSpan.FromMilliseconds(50));
             Assert.True(pendingTask.IsCompleted);
         }
@@ -121,19 +121,19 @@ namespace OmniSharp.Roslyn.CSharp.Tests
         {
             var now = DateTime.UtcNow;
             var queue = new AnalyzerWorkQueue(new LoggerFactory(), utcNow: () => now, timeoutForPendingWorkMs: 500);
-            var projectId = ProjectId.CreateNewId();
+            var document = CreateTestDocument();
 
-            queue.PutWork(projectId);
+            queue.PutWork(document);
 
             now = PassOverThrotlingPeriod(now);
 
             var work = queue.TakeWork();
 
-            var pendingTask = queue.WaitForPendingWorkDoneEvent(work);
+            var pendingTask = queue.WaitWorkReadyForDocuments(work);
             pendingTask.Wait(TimeSpan.FromMilliseconds(50));
 
             Assert.False(pendingTask.IsCompleted);
-            queue.MarkWorkAsCompleteForProject(projectId);
+            queue.MarkWorkAsCompleteForDocument(document);
             pendingTask.Wait(TimeSpan.FromMilliseconds(50));
             Assert.True(pendingTask.IsCompleted);
         }
@@ -144,18 +144,18 @@ namespace OmniSharp.Roslyn.CSharp.Tests
             var now = DateTime.UtcNow;
             var loggerFactory = new LoggerFactory();
             var queue = new AnalyzerWorkQueue(loggerFactory, utcNow: () => now, timeoutForPendingWorkMs: 20);
-            var projectId = ProjectId.CreateNewId();
+            var document = CreateTestDocument();
 
-            queue.PutWork(projectId);
+            queue.PutWork(document);
 
             now = PassOverThrotlingPeriod(now);
             var work = queue.TakeWork();
 
-            var pendingTask = queue.WaitForPendingWorkDoneEvent(work);
+            var pendingTask = queue.WaitWorkReadyForDocuments(work);
             pendingTask.Wait(TimeSpan.FromMilliseconds(100));
 
             Assert.True(pendingTask.IsCompleted);
-            Assert.Contains("Timeout before work got ready for", loggerFactory.Logger.RecordedMessages.Single());
+            Assert.Contains("Timeout before work got ready", loggerFactory.Logger.RecordedMessages.Single());
         }
 
         [Fact]
@@ -163,27 +163,33 @@ namespace OmniSharp.Roslyn.CSharp.Tests
         {
             var now = DateTime.UtcNow;
 
-            var queue = new AnalyzerWorkQueue(new LoggerFactory(), utcNow: () => now, timeoutForPendingWorkMs: 50);
+            var queue = new AnalyzerWorkQueue(new LoggerFactory(), utcNow: () => now, timeoutForPendingWorkMs: 1000);
 
             var parallelQueues =
                 Enumerable.Range(0, 10)
                     .Select(_ =>
                         Task.Run(() => {
-                            var projectId = ProjectId.CreateNewId();
+                            var document = CreateTestDocument();
 
-                            queue.PutWork(projectId);
+                            queue.PutWork(document);
 
-                            PassOverThrotlingPeriod(now);
+                            now = PassOverThrotlingPeriod(now);
                             var work = queue.TakeWork();
 
-                            var pendingTask = queue.WaitForPendingWorkDoneEvent(work);
-                            pendingTask.Wait(TimeSpan.FromMilliseconds(5));
+                            var pendingTask = queue.WaitWorkReadyForDocuments(work);
 
-                            Assert.True(pendingTask.IsCompleted);
+                            foreach (var workDoc in work)
+                            {
+                                queue.MarkWorkAsCompleteForDocument(workDoc);
+                            }
+
+                            pendingTask.Wait(TimeSpan.FromMilliseconds(300));
                     }))
                     .ToArray();
 
             await Task.WhenAll(parallelQueues);
+
+            Assert.Empty(queue.TakeWork());
         }
 
         [Fact]
@@ -192,22 +198,22 @@ namespace OmniSharp.Roslyn.CSharp.Tests
             var now = DateTime.UtcNow;
             var loggerFactory = new LoggerFactory();
             var queue = new AnalyzerWorkQueue(loggerFactory, utcNow: () => now);
-            var projectId = ProjectId.CreateNewId();
+            var document = CreateTestDocument();
 
-            queue.PutWork(projectId);
+            queue.PutWork(document);
 
             now = PassOverThrotlingPeriod(now);
 
             var work = queue.TakeWork();
-            var waitingCall = Task.Run(async () => await queue.WaitForPendingWorkDoneEvent(work));
+            var waitingCall = Task.Run(async () => await queue.WaitWorkReadyForDocuments(work));
             await Task.Delay(50);
 
-            // User updates code -> project is queued again during period when theres already api call waiting
+            // User updates code -> document is queued again during period when theres already api call waiting
             // to continue.
-            queue.PutWork(projectId);
+            queue.PutWork(document);
 
             // First iteration of work is done.
-            queue.MarkWorkAsCompleteForProject(projectId);
+            queue.MarkWorkAsCompleteForDocument(document);
 
             // Waiting call continues because it's iteration of work is done, even when theres next
             // already waiting.
@@ -215,6 +221,23 @@ namespace OmniSharp.Roslyn.CSharp.Tests
 
             Assert.True(waitingCall.IsCompleted);
             Assert.Empty(loggerFactory.Logger.RecordedMessages);
+        }
+
+        private Document CreateTestDocument()
+        {
+            var projectInfo = ProjectInfo.Create(
+                    id: ProjectId.CreateNewId(),
+                    version: VersionStamp.Create(),
+                    name: "testProject",
+                    assemblyName: "AssemblyName",
+                    language: LanguageNames.CSharp);
+
+            var tempWorkspace = new AdhocWorkspace();
+            tempWorkspace.AddProject(projectInfo);
+            return tempWorkspace.AddDocument(DocumentInfo.Create(
+                id: DocumentId.CreateNewId(projectInfo.Id),
+                name: "testFile.cs"));
+
         }
     }
 }
