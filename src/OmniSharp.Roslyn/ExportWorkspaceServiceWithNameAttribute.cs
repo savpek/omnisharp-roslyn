@@ -73,8 +73,6 @@ namespace OmniSharp
         {
             ProxyGenerator generator = new ProxyGenerator();
             var internalType = Assembly.Load("Microsoft.CodeAnalysis.Features").GetType("Microsoft.CodeAnalysis.PickMembers.IPickMembersService");
-            // var vsDummyType = Assembly.Load("Microsoft.VisualStudio.LanguageServices").GetType("Microsoft.VisualStudio.LanguageServices.Implementation.PickMembers.VisualStudioPickMembersService");
-            // var dummyService = Activator.CreateInstance(vsDummyType, new object[] { null });
             return (IWorkspaceService)generator.CreateInterfaceProxyWithoutTarget(internalType, new[] { typeof(IWorkspaceService)}, new SomeInterceptor());
         }
     }
