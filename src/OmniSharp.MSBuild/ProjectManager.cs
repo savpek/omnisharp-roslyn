@@ -63,7 +63,6 @@ namespace OmniSharp.MSBuild
         private bool _processingQueue;
 
         private readonly FileSystemNotificationCallback _onDirectoryFileChanged;
-        private readonly RulesetsForProjects _rulesetsForProjects;
 
         public ProjectManager(
             ILoggerFactory loggerFactory,
@@ -75,7 +74,6 @@ namespace OmniSharp.MSBuild
             ProjectLoader projectLoader,
             OmniSharpWorkspace workspace,
             CachingCodeFixProviderForProjects codeFixesForProject,
-            RulesetsForProjects rulesetsForProjects,
             IAnalyzerAssemblyLoader assemblyLoader,
             ImmutableArray<IMSBuildEventSink> eventSinks)
         {
@@ -97,7 +95,6 @@ namespace OmniSharp.MSBuild
             _processLoopTask = Task.Run(() => ProcessLoopAsync(_processLoopCancellation.Token));
             _assemblyLoader = assemblyLoader;
             _onDirectoryFileChanged = OnDirectoryFileChanged;
-            _rulesetsForProjects = rulesetsForProjects;
 
             if (_options.LoadProjectsOnDemand)
             {
@@ -119,11 +116,11 @@ namespace OmniSharp.MSBuild
                 var csProjFiles = Directory.EnumerateFiles(projectDir, "*.csproj", SearchOption.TopDirectoryOnly).ToList();
                 if (csProjFiles.Count > 0)
                 {
-                    foreach(string csProjFile in csProjFiles)
+                    foreach (string csProjFile in csProjFiles)
                     {
                         if (_projectsRequestedOnDemand.TryAdd(csProjFile, 0 /*unused*/))
                         {
-                            QueueProjectUpdate(csProjFile, allowAutoRestore:true);
+                            QueueProjectUpdate(csProjFile, allowAutoRestore: true);
                         }
                     }
 
@@ -131,7 +128,7 @@ namespace OmniSharp.MSBuild
                 }
 
                 projectDir = Path.GetDirectoryName(projectDir);
-            } while(projectDir != null);
+            } while (projectDir != null);
 
             // Wait for all queued projects to load to ensure that workspace is fully up to date before this method completes.
             // If the project for the document was loaded before and there are no other projects to load at the moment, the call below will be no-op.
@@ -357,9 +354,6 @@ namespace OmniSharp.MSBuild
 
             _codeFixesForProject.LoadFrom(projectInfo);
 
-            if(projectFileInfo.RuleSet != null)
-                _rulesetsForProjects.AddOrUpdateRuleset(projectFileInfo.Id, projectFileInfo.RuleSet);
-
             var newSolution = _workspace.CurrentSolution.AddProject(projectInfo);
 
             if (!_workspace.TryApplyChanges(newSolution))
@@ -378,6 +372,14 @@ namespace OmniSharp.MSBuild
             {
                 QueueProjectUpdate(projectFileInfo.FilePath, allowAutoRestore: true);
             });
+
+            if (projectFileInfo.RuleSet?.FilePath != null)
+            {
+                _fileSystemWatcher.Watch(projectFileInfo.RuleSet.FilePath, (file, changeType) =>
+                {
+                    QueueProjectUpdate(projectFileInfo.FilePath, allowAutoRestore: false);
+                });
+            }
 
             if (!string.IsNullOrEmpty(projectFileInfo.ProjectAssetsFile))
             {
@@ -425,10 +427,33 @@ namespace OmniSharp.MSBuild
             }
 
             UpdateSourceFiles(project, projectFileInfo.SourceFiles);
+            UpdateProjectWithRulesets(project, projectFileInfo);
             UpdateParseOptions(project, projectFileInfo.LanguageVersion, projectFileInfo.PreprocessorSymbolNames, !string.IsNullOrWhiteSpace(projectFileInfo.DocumentationFile));
             UpdateProjectReferences(project, projectFileInfo.ProjectReferences);
             UpdateReferences(project, projectFileInfo.ProjectReferences, projectFileInfo.References);
+
             _workspace.TryPromoteMiscellaneousDocumentsToProject(project);
+        }
+
+        private void UpdateProjectWithRulesets(Project project, ProjectFileInfo projectFileInfo)
+        {
+            if (projectFileInfo.RuleSet?.SpecificDiagnosticOptions == null)
+                return;
+
+            var existingRules = project.CompilationOptions.SpecificDiagnosticOptions;
+            var newRules = projectFileInfo.RuleSet.SpecificDiagnosticOptions;
+            var distinctRulesWithProjectSpecificRules = newRules.Concat(existingRules.Where(x => !newRules.Keys.Contains(x.Key)));
+
+            var updatedProject = project.WithCompilationOptions(
+                project.CompilationOptions.WithSpecificDiagnosticOptions(distinctRulesWithProjectSpecificRules)
+            );
+
+            var updatedSolution = _workspace
+                .CurrentSolution
+                .WithProjectCompilationOptions(
+                    project.Id, project.CompilationOptions.WithSpecificDiagnosticOptions(distinctRulesWithProjectSpecificRules));
+
+            _workspace.TryApplyChanges(updatedSolution);
         }
 
         private void UpdateSourceFiles(Project project, IList<string> sourceFiles)
