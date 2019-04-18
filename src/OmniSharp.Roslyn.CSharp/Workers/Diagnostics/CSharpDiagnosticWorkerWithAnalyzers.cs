@@ -156,11 +156,11 @@ namespace OmniSharp.Roslyn.CSharp.Services.Diagnostics
             if (changeEvent.Kind == WorkspaceChangeKind.DocumentChanged
                 || changeEvent.Kind == WorkspaceChangeKind.DocumentAdded
                 || changeEvent.Kind == WorkspaceChangeKind.DocumentReloaded
-                || changeEvent.Kind == WorkspaceChangeKind.DocumentInfoChanged )
+                || changeEvent.Kind == WorkspaceChangeKind.DocumentInfoChanged)
             {
                 QueueForAnalysis(ImmutableArray.Create(changeEvent.DocumentId));
             }
-            else if(changeEvent.Kind == WorkspaceChangeKind.DocumentRemoved)
+            else if (changeEvent.Kind == WorkspaceChangeKind.DocumentRemoved)
             {
                 _currentDiagnosticResults.TryRemove(changeEvent.DocumentId, out _);
             }
@@ -183,16 +183,20 @@ namespace OmniSharp.Roslyn.CSharp.Services.Diagnostics
                     .Concat(projectWithOptions.AnalyzerReferences.SelectMany(x => x.GetAnalyzers(projectWithOptions.Language)))
                     .ToImmutableArray();
 
-                var compiled = await projectWithOptions
-                    .GetCompilationAsync();
+                var compilation = await projectWithOptions
+                            .GetCompilationAsync();
 
                 var workspaceAnalyzerOptions =
                     (AnalyzerOptions)_workspaceAnalyzerOptionsConstructor.Invoke(new object[] { projectWithOptions.AnalyzerOptions, projectWithOptions.Solution.Options, projectWithOptions.Solution });
 
+                var compilationWithAnalyzers = CompileWithAnalyzersIfAny(allAnalyzers, compilation, workspaceAnalyzerOptions);
+
+                var projectScopedDiagnostics = await compilationWithAnalyzers?.GetAnalyzerDiagnosticsAsync(new CancellationTokenSource(15 * 1000).Token);
+
                 foreach (var documentId in documentsGroupedByProject)
                 {
                     var document = projectWithOptions.GetDocument(documentId);
-                    await AnalyzeDocument(projectWithOptions, allAnalyzers, compiled, workspaceAnalyzerOptions, document);
+                    await AnalyzeDocument(projectWithOptions, compilationWithAnalyzers, document, projectScopedDiagnostics);
                 }
             }
             catch (Exception ex)
@@ -201,7 +205,19 @@ namespace OmniSharp.Roslyn.CSharp.Services.Diagnostics
             }
         }
 
-        private async Task AnalyzeDocument(Project project, ImmutableArray<DiagnosticAnalyzer> allAnalyzers, Compilation compiled, AnalyzerOptions workspaceAnalyzerOptions, Document document)
+        private static CompilationWithAnalyzers CompileWithAnalyzersIfAny(ImmutableArray<DiagnosticAnalyzer> allAnalyzers, Compilation compilation, AnalyzerOptions workspaceAnalyzerOptions)
+        {
+            if(allAnalyzers.Any())
+            {
+                return compilation.WithAnalyzers(allAnalyzers, workspaceAnalyzerOptions);  // Analyzers cannot be called with empty analyzer list.
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        private async Task AnalyzeDocument(Project project, CompilationWithAnalyzers compilationWithAnalyzers, Document document, ImmutableArray<Diagnostic> projectScopedDiagnostics)
         {
             try
             {
@@ -219,19 +235,18 @@ namespace OmniSharp.Roslyn.CSharp.Services.Diagnostics
                     var syntaxTree = await document.GetSyntaxTreeAsync();
                     diagnostics = syntaxTree.GetDiagnostics().ToImmutableArray();
                 }
-                else if (allAnalyzers.Any()) // Analyzers cannot be called with empty analyzer list.
+                else if (compilationWithAnalyzers != null)
                 {
-                    var semanticDiagnosticsWithAnalyzers = await compiled
-                        .WithAnalyzers(allAnalyzers, workspaceAnalyzerOptions)
+                    var semanticDiagnosticsWithAnalyzers = await compilationWithAnalyzers
                         .GetAnalyzerSemanticDiagnosticsAsync(documentSemanticModel, filterSpan: null, perDocumentTimeout.Token);
 
-                    var syntaxDiagnosticsWithAnalyzers = await compiled
-                        .WithAnalyzers(allAnalyzers, workspaceAnalyzerOptions)
+                    var syntaxDiagnosticsWithAnalyzers = await compilationWithAnalyzers
                         .GetAnalyzerSyntaxDiagnosticsAsync(documentSemanticModel.SyntaxTree, perDocumentTimeout.Token);
 
                     diagnostics = semanticDiagnosticsWithAnalyzers
                         .Concat(syntaxDiagnosticsWithAnalyzers)
                         .Concat(documentSemanticModel.GetDiagnostics())
+                        .Concat(projectScopedDiagnostics.Where(x => x.Location.GetLineSpan().Path == document.FilePath))
                         .ToImmutableArray();
                 }
                 else
@@ -243,7 +258,7 @@ namespace OmniSharp.Roslyn.CSharp.Services.Diagnostics
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Analysis of document {document.Name} failed or cancelled by timeout: {ex.Message}, analysers: {string.Join(", ", allAnalyzers)}");
+                _logger.LogError($"Analysis of document {document.Name} failed or cancelled by timeout: {ex.Message}, analysers: {string.Join(", ", compilationWithAnalyzers.Analyzers)}");
                 _workQueue.MarkWorkAsCompleteForDocumentId(document.Id);
             }
         }
