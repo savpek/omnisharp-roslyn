@@ -24,6 +24,7 @@ using OmniSharp.Options;
 using OmniSharp.Roslyn.Utilities;
 using OmniSharp.Services;
 using OmniSharp.Utilities;
+using System.Reflection;
 
 namespace OmniSharp.MSBuild
 {
@@ -362,6 +363,8 @@ namespace OmniSharp.MSBuild
                 _rulesetsForProjects.AddOrUpdateRuleset(projectFileInfo.Id, projectFileInfo.RuleSet);
 
             var newSolution = _workspace.CurrentSolution.AddProject(projectInfo);
+
+            newSolution = (Solution)newSolution.GetType().GetTypeInfo().GetDeclaredMethod("WithProjectDefaultNamespace").Invoke(newSolution, new object[] { projectInfo.Id, "foobar_test_default_namespace"});
 
             if (!_workspace.TryApplyChanges(newSolution))
             {
